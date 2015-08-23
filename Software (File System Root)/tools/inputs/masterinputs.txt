@@ -1,0 +1,13 @@
+[myvars]
+maplat: 33.000001
+maplon: -117.000001
+pan_time_limit: 30
+tilt_time_limit: 30
+lowestangle: 15
+motor1max_speed: 200
+motor2max_speed: 200
+sleep_tolerance: 5
+AngleOffset: 9
+MagneticDeclination: -11.8333
+HorizontalCalibration: 9
+hmargin: 5

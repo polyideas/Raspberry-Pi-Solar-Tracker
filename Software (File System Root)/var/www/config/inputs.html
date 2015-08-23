@@ -1,0 +1,90 @@
+<!-- Table generated via http://www.tablesgenerator.com/html_tables# -->
+<!-- Password protected folder via http://www.debiantutorials.com/password-protecting-a-directory-with-apache-and-htaccess/ -->
+<!-- Turn off nano syntax highlighting with Alt-Y http://stackoverflow.com/questions/13205254/how-to-turn-off-or-at-least-override-syntax-highlighting-in-nano-via-nanorc -->
+<!- -->
+
+<font size="2" face="verdana">
+<a href="/">Home</a><br>
+<a href="/stats.html">Detailed Stats</a><br>
+
+<form action="/cgi-bin/calibration.py" method="POST">
+
+
+<table style="undefined;table-layout: fixed; width: 442px">
+<colgroup>
+<col style="width: 200px">
+<col style="width: 110px">
+<col style="width: 160px">
+</colgroup>
+  <tr>
+    <th>Setting</th>
+    <th>Default</th>
+    <th>New Value</th>
+  </tr>
+  <tr>
+    <td>Robot Latitude:</td>
+    <td>33.000001</td>
+    <td><input type="text" size="12" name="maplat" value=""></td>
+  </tr>
+  <tr>
+    <td>Robot Longitude:</td>
+    <td>-117.000001</td>
+    <td><input type="text" size="12" name="maplon" value=""></td>
+  </tr>
+  <tr>
+    <td>Pan Motor Time Limit</td>
+    <td>15</td>
+    <td><input type="text" size="3" name="pan_time_limit" value=""></td>
+  </tr>
+  <tr>
+    <td>Tilt Motor Time Limit</td>
+    <td>30</td>
+    <td><input type="text" size="3" name="tilt_time_limit" value=""></td>
+  </tr>
+  <tr>
+    <td>Lowest Angle Tilt</td>
+    <td>15</td>
+    <td><input type="text" size="2" name="lowestangle" value=""></td>
+  </tr>
+  <tr>
+    <td>Motor 1 Max Speed</td>
+    <td>20</td>
+    <td><input type="text" size="2" name="motor1max_speed" value=""></td>
+  </tr>
+  <tr>
+    <td>Motor 2 Max Speed</td>
+    <td>20</td>
+    <td><input type="text" size="2" name="motor2max_speed" value=""></td>
+  </tr>
+  <tr>
+    <td>Sleep Tolerance</td>
+    <td>5</td>
+    <td><input type="text" size="3" name="sleep_tolerance" value=""></td>
+  </tr>
+  <tr>
+    <td>Angle Offset</td>
+    <td>9</td>
+    <td><input type="text" size="3" name="AngleOffset" value=""></td>
+  </tr>
+  <tr>
+    <td>Magnetic Declination</td>
+    <td>-11.8333</td>
+    <td><input type="text" size="3" name="MagneticDeclination" value=""></td>
+  </tr>
+  <tr>
+    <td>Horizontal Calibration</td>
+    <td>9</td>
+    <td><input type="text" size="3" name="HorizontalCalibration" value=""></td>
+  </tr>
+  <tr>
+    <td>Horizontal Margin of Error:</td>
+    <td>9</td>
+    <td><input type="text" size="3" name="hmargin" value=""></td>
+  </tr>
+</table>
+
+    <input type="submit" value="Submit">
+    <input type="reset" value="Reset">
+
+</form>
+</font>

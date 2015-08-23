@@ -1,34 +1,14 @@
 #!/usr/bin/python
 
 #Version Notes
-#23: 	Fixed Azimuth calculations in tomorrow calculations to match standard calculation
-#	Simplified curheading calc into fewer lines
-#24:	Attempted to fix tomorrow calc by consolidating if/then statements
-#	Removed temp sensor stuff after shorting out the sensor
-#25:	Added sensor code back in
-#26:	Added lines for actual readings of heading and elevation to the rrdtool graphs
-#27:	Cleanup of the angle code to fix horizon issues and addition of the analog chart
-#28:	Moved modprobe stuff for temp to rc.local, moved serial from usb to onboard ttyAMA0
-#	Tweaked names in the html output
-#29:	Clean up html and image generation for the combo graph (used by the twitter script)
-#30:	Added digital IO controls for passive mode, removed temp code and put it in its own script
-#	Removed digital IO controls
-#31:	Added digiital IO control backs and tested with GPIO 16.
-#	Added motor limit code so that rotation motor doesn't run longer than 30 seconds
-#32:	Added limit code for tilt
-#33:	**************************************
-#	Moving motor code to new platform, changed motor motion for linear actuator to match the motor
-#34:	Added calibration routines
-#	Added/fixed manual switches for ovveride (sleep) mode and horizon (setup) modes	
-#35:	Cleaned up old code comments
-#36:	Added code for backup, which runs the panning motor backwards for 4 seconds at dusk- this
-#	keeps the robot from getting stuck near magnetic north, which can confuse the robot
-#37:	Moved variables to config file, allowing for web based control
-#38:	Cleaned up old comments and motor control code- motors now ramp correctly
+#39:    Brought over from solar robot 7, cleanup of OpenElectrons code (going back to a Pololu controller)
+#40:    Code optimizations for Raspberry Pi A+
+#42:    Code cleanup, added debug toggle
 
 from __future__ import print_function
 import time, math
 import serial, Pysolar, datetime
+from dual_mc33926_rpi import motors, MAX_SPEED
 
 #digital stuff
 import RPi.GPIO as GPIO
@@ -37,10 +17,13 @@ import RPi.GPIO as GPIO
 import ConfigParser
 
 # for the motor control we need the libraries for this controller:
-from SmartDrive import SmartDrive
-SmartDrive = SmartDrive()
 
 import os, sys
+print(((str(sys.argv[1:])[2:])[:-2]))
+if (((str(sys.argv[1:])[2:])[:-2]) == "debug"):
+    debug = True
+else:
+    debug = False
 
 #read in all our variables
 config = ConfigParser.ConfigParser()
@@ -77,11 +60,20 @@ AngleOffset = int(config.get("myvars", "AngleOffset"))
 #Smaller numbers mean more accurate heading, but motor must go slower
 hmargin = int(config.get("myvars", "hmargin"))
 
+#Pololu Motor Stuff
+# Set up sequences of motor speeds.
+test_forward_speeds = list(range(0, MAX_SPEED, 1)) + [MAX_SPEED] * 200 + list(range(MAX_SPEED, 0, -1)) + [0]
+test_reverse_speeds = list(range(0, -MAX_SPEED, -1)) + [-MAX_SPEED] * 200 + list(range(-MAX_SPEED, 0, 1)) + [0]
+motors.enable()
+motors.setSpeeds(0, 0)
+
 #prep the digital ports
 GPIO.setwarnings(False)
 GPIO.setmode(GPIO.BCM)
 GPIO.setup(16, GPIO.IN, pull_up_down=GPIO.PUD_DOWN) #this pin is for the override mode switch
 GPIO.setup(19, GPIO.IN, pull_up_down=GPIO.PUD_DOWN) #this pin is for horizon mode, on=do no motor movement at all
+GPIO.setup(20, GPIO.IN, pull_up_down=GPIO.PUD_DOWN) #unused but wired
+GPIO.setup(21, GPIO.IN, pull_up_down=GPIO.PUD_DOWN) #unused but wired
 
 #These are our global motor speed variables- don't touch
 global motor1speed
@@ -93,8 +85,7 @@ motor2speed = 0
 serialport = serial.Serial("/dev/ttyAMA0", 57600, timeout=5)
 
 #Make sure the motors aren't doing anything before we start
-SmartDrive.SmartDrive_Stop(SmartDrive.SmartDrive_Motor_1, SmartDrive.SmartDrive_Next_Action_Brake)
-SmartDrive.SmartDrive_Stop(SmartDrive.SmartDrive_Motor_2, SmartDrive.SmartDrive_Next_Action_Brake)
+motors.setSpeeds(0, 0)
 
 #Calibrate the heading
 Declination = MagneticDeclination + HorizontalCalibration
@@ -109,11 +100,11 @@ def getcurtilt():
         serialport.write("\x23o0\x23f")
         response = serialport.readline()
         words = response.split(",")
-	if len(words) > 2:
-		try:
-        		curtilt = float(words[2])
-		except:
-			curtilt = 999
+        if len(words) > 2:
+                try:
+                        curtilt = float(words[2])
+                except:
+                        curtilt = 999
         return curtilt
 
 #Get the heading from the IMU
@@ -122,15 +113,16 @@ def getcurheading():
 # The escape character for # is \x23 in hex
         serialport.write("\x23o0 \x23f")
         headresponse = serialport.readline()
-#	print(headresponse)
+#       print(headresponse)
         words = headresponse.split(",")
-	if len(words) > 2:
-		try:
-		        curheading = (float(words[0])) + 180
-			if curheading + Declination > 360: curheading = curheading - 360 + Declination
-			else: curheading = curheading + Declination
-		except:
-			curheading = 999
+        if len(words) > 2:
+                try:
+                        curheading = (float(words[0])) + 180
+                        if curheading + Declination > 360: curheading = curheading - 360 + Declination
+                        else: curheading = curheading + Declination
+                except:
+                        curheading = 999
+#       print(curheading)
         return curheading
 
 #Read the IMU to get the angle of incline (forwards/backwards)
@@ -141,14 +133,14 @@ def getcurangle():
         serialport.write("\x23o0 \x23f")
         response = serialport.readline()
         words = response.split(",")
-	if len(words) > 2:
-		try:
-		        if ((float(words[1]) -90) * -1) < 89:
-                		curangle = ((float(words[1]) -90) * -1)
-        		else:
-                		curangle = 0
-		except:
-			curangle = 999
+        if len(words) > 2:
+                try:
+                        if ((float(words[1]) -90) * -1) < 89:
+                                curangle = ((float(words[1]) -90) * -1)
+                        else:
+                                curangle = 0
+                except:
+                        curangle = 999
         return curangle + AngleOffset
 
 #For troubleshooting, we use raw Azimuth from the calc
@@ -158,157 +150,153 @@ def getcurangle():
 def getrawazimuth():
         Azimuth = Pysolar.GetAzimuth(maplat, maplon, datetime.datetime.utcnow())
         return Azimuth
-	
+
 #Convert Azimuth (the direction of the shadow, degrees from south)
 # to heading, we have to deal with a few cases
 def getsolarheading():
         Azimuth = Pysolar.GetAzimuth(maplat, maplon, datetime.datetime.utcnow())
-	if Azimuth < 0:
-		if (Azimuth >= -180):
-			solarheading = ((Azimuth * -1) + 180)
-		if (Azimuth < -180):
-			solarheading = ((Azimuth * -1) - 180)
-	if Azimuth >= 0:
-		solarheading = Azimuth
+        if Azimuth < 0:
+                if (Azimuth >= -180):
+                        solarheading = ((Azimuth * -1) + 180)
+                if (Azimuth < -180):
+                        solarheading = ((Azimuth * -1) - 180)
+        if Azimuth >= 0:
+                solarheading = Azimuth
         return solarheading
 
 
 def tomorrow_heading():
         increment_min = 1
         incrementeddatetime = 0
-	tomorrow_corrected = 90
+        tomorrow_corrected = 90
         if Pysolar.GetAltitude(maplat, maplon, datetime.datetime.utcnow()) < 0:
                 while Pysolar.GetAltitude(maplat, maplon, (datetime.datetime.utcnow() + datetime.timedelta(minutes=incrementeddatetime))) < 0:
                         incrementeddatetime = incrementeddatetime + increment_min
-		sunrise_time=(datetime.datetime.utcnow() + datetime.timedelta(minutes=incrementeddatetime))
+                sunrise_time=(datetime.datetime.utcnow() + datetime.timedelta(minutes=incrementeddatetime))
                 tomorrow_heading = Pysolar.GetAzimuth(maplat, maplon, sunrise_time)
-		if tomorrow_heading < 0:
-			if (tomorrow_heading >= -180):
-				tomorrow_corrected = ((tomorrow_heading * -1) + 180)
-			if (tomorrow_heading < -180):
-				tomorrow_corrected = ((tomorrow_heading * -1) - 180)
-		if tomorrow_heading >= 0:
-			tomorrow_corrected = tomorrow_heading
+                if tomorrow_heading < 0:
+                        if (tomorrow_heading >= -180):
+                                tomorrow_corrected = ((tomorrow_heading * -1) + 180)
+                        if (tomorrow_heading < -180):
+                                tomorrow_corrected = ((tomorrow_heading * -1) - 180)
+                if tomorrow_heading >= 0:
+                        tomorrow_corrected = tomorrow_heading
         return tomorrow_corrected
 
 def getsolarangle():
         solarangle = Pysolar.GetAltitude(maplat, maplon, datetime.datetime.utcnow())
-	return solarangle
+        return solarangle
 
 def motor2neg():
-	global motor2speed
-	if (motor2speed < motor2max_speed):
-	        motor2speed = motor2speed + 1
-#	print(getcurheading())
-#	print("Motor speed clockwise")
-	SmartDrive.SmartDrive_Run_Unlimited(SmartDrive.SmartDrive_Motor_2, SmartDrive.SmartDrive_Direction_Reverse, motor2speed)
-	return
+    global motor2speed
+    if (motor2speed < motor2max_speed):
+        motor2speed = motor2speed + 5
+    motors.motor2.setSpeed((motor2speed*-1))
+    return
 
 def motor2backup():
-	motor2speed = 0
-	backupsecs = 4
-	backup_start_time = datetime.datetime.utcnow()
-	while 	(datetime.datetime.utcnow() < (backup_start_time + datetime.timedelta(seconds=backupsecs))): 
-	        while motor2speed < motor2max_speed:
-        	        motor2speed = motor2speed + 1
-	print(getcurheading())
-	print("Backup")
-#			SmartDrive.SmartDrive_Run_Unlimited(SmartDrive.SmartDrive_Motor_2, SmartDrive.SmartDrive_Direction_Reverse, motor2speed)
-#		SmartDrive.SmartDrive_Stop(SmartDrive.SmartDrive_Motor_2, SmartDrive.SmartDrive_Next_Action_Brake)
-	return
+        motor2speed = 0
+        backupsecs = 4
+        backup_start_time = datetime.datetime.utcnow()
+        while   (datetime.datetime.utcnow() < (backup_start_time + datetime.timedelta(seconds=backupsecs))):
+                while motor2speed < motor2max_speed:
+                        motor2speed = motor2speed + 1
+#Backup
+#Doesn't do anything right now
+        return
 
 def motor2pos():
-	global motor2speed
-	if (motor2speed < motor2max_speed):
-	        motor2speed = motor2speed + 1
-		SmartDrive.SmartDrive_Run_Unlimited(SmartDrive.SmartDrive_Motor_2, SmartDrive.SmartDrive_Direction_Forward, motor2speed)
-#	print(getcurheading())
-#	print(motor2speed)
-#	print("Motor speed clockwise")
-	return
+    global motor2speed
+    if (motor2speed < motor2max_speed):
+        motor2speed = motor2speed + 5
+    motors.motor2.setSpeed(motor2speed)
+    return
 
 def motor1raise():
-	global motor1speed
-	if (motor1speed < motor1max_speed):
-	        motor1speed = motor1speed + 1
-	#raise the panel from the horizon
-	#forward motor speed extends the actuator
-        SmartDrive.SmartDrive_Run_Unlimited(SmartDrive.SmartDrive_Motor_1, SmartDrive.SmartDrive_Direction_Forward, motor1speed)
-	return
+    global motor1speed
+    if (motor1speed < motor1max_speed):
+        motor1speed = motor1speed + 5
+        #raise the panel from the horizon
+        #reverse motor speed extends the actuator
+    motors.motor1.setSpeed((motor1speed*-1))
+    return
 
 def motor1lower():
-	global motor1speed
-	if (motor1speed < motor1max_speed):
-	        motor1speed = motor1speed + 1
-	#lower the panel to the horizon
-	#reverse motor speed extends the actuator
-        SmartDrive.SmartDrive_Run_Unlimited(SmartDrive.SmartDrive_Motor_1, SmartDrive.SmartDrive_Direction_Reverse, motor1speed)
-	return
+    global motor1speed
+    if (motor1speed < motor1max_speed):
+        motor1speed = motor1speed + 5
+        #lower the panel to the horizon
+        #forward motor speed contracts the actuator
+    motors.motor1.setSpeed(motor1speed)
+    return
 
 tomorrow_static = tomorrow_heading()
 #Here we check to make sure horizon (19) and ovveride (16) digital pins aren't on
-print("GPIO 16 (ovveride) is " + str(GPIO.input(16)))
-print("GPIO 19 (horizon) is " + str(GPIO.input(19)))
+#print("GPIO 16 (ovveride) is " + str(GPIO.input(16)))
+#print("GPIO 19 (horizon) is " + str(GPIO.input(19)))
 #print(GPIO.input(19))
 if (GPIO.input(16) == False) and (GPIO.input(19) == False): #check to see if the passive mode switch is on
 # GPIO 16 is for override and GPIO 19 is for horizon mode
 
 #In this section we rotate as needed
-	starttime = datetime.datetime.utcnow()
+    starttime = datetime.datetime.utcnow()
+    if (getcurheading() > getsolarheading()) and (getsolarangle() > 2) and (getcurheading() <> 999):
+        while (getcurheading() > (getsolarheading() + hmargin)) and (starttime + datetime.timedelta(seconds=pan_time_limit) > datetime.datetime.utcnow()):
+            if debug == True:
+                print("1: Moving " + str(getcurheading()) + " to " + str(getsolarheading()))
+            motor2neg()
+        motors.setSpeeds(0, 0)
 
-        if (getcurheading() > getsolarheading()) and (getsolarangle() > 2) and getcurheading() <> 999:
-		print("Case 1")
-		while (getcurheading() > (getsolarheading() + hmargin)) and (starttime + datetime.timedelta(seconds=pan_time_limit) > datetime.datetime.utcnow()):
-                	motor2neg()
-		SmartDrive.SmartDrive_Stop(SmartDrive.SmartDrive_Motor_2, SmartDrive.SmartDrive_Next_Action_Brake)
-	starttime = datetime.datetime.utcnow()
+    starttime = datetime.datetime.utcnow()
+    if (getcurheading() < getsolarheading()) and (getsolarangle() > 2) and (getcurheading() <> 999):
+        while (getcurheading() < (getsolarheading() - hmargin)) and (starttime + datetime.timedelta(seconds=pan_time_limit) > datetime.datetime.utcnow()):
+            if debug == True:
+                print("2: Moving " + str(getcurheading()) + " to " + str(getsolarheading()))
+            motor2pos()
+        motors.setSpeeds(0, 0)
 
-        if (getcurheading() < getsolarheading()) and (getsolarangle() > 2) and (getcurheading() <> 999):
-		print("Case 2")
-                while (getcurheading() < (getsolarheading() - hmargin)) and (starttime + datetime.timedelta(seconds=pan_time_limit) > datetime.datetime.utcnow()):
-			motor2pos()
-		SmartDrive.SmartDrive_Stop(SmartDrive.SmartDrive_Motor_2, SmartDrive.SmartDrive_Next_Action_Brake)
-	starttime = datetime.datetime.utcnow()
+    starttime = datetime.datetime.utcnow()
+    if (getcurheading() > tomorrow_static) and (getsolarangle()<0) and (getcurheading() <> 999):
+        if (getcurheading() - tomorrow_static) > sleep_tolerance:
+            while (getcurheading() > (tomorrow_static + hmargin)) and (starttime + datetime.timedelta(seconds=pan_time_limit) > datetime.datetime.utcnow()):
+                if debug == True:
+                    print("3: Moving " + str(getcurheading()) + " to " + str(tomorrow_static + hmargin))
+                motor2neg()
+            motors.setSpeeds(0, 0)
 
-	if (getcurheading() > tomorrow_static) and (getsolarangle()<0) and (getcurheading() <> 999):
-		print("Case 3")
-		if (getcurheading() - tomorrow_static) > sleep_tolerance:
-#			if getcurheading() > 345:
-#				motor2backup()
-#			if getcurheading() < 0:
-#				motor2backup()
-               		while (getcurheading() > (tomorrow_static + hmargin)) and (starttime + datetime.timedelta(seconds=pan_time_limit) > datetime.datetime.utcnow()):
-                       		motor2neg()
-			SmartDrive.SmartDrive_Stop(SmartDrive.SmartDrive_Motor_2, SmartDrive.SmartDrive_Next_Action_Brake)
-	starttime = datetime.datetime.utcnow()
-        if (getcurheading() < tomorrow_static) and (getsolarangle()<0) and (getcurheading <> 999):
-		print("Case 4")
-		if (tomorrow_static - getcurheading()) > sleep_tolerance:
-			if getcurheading() < 15:
-				motor2backup()
-               		while (getcurheading() < (tomorrow_static - hmargin)) and (starttime + datetime.timedelta(seconds=pan_time_limit) > datetime.datetime.utcnow()):
-				motor2pos()
-			SmartDrive.SmartDrive_Stop(SmartDrive.SmartDrive_Motor_2, SmartDrive.SmartDrive_Next_Action_Brake)
+    starttime = datetime.datetime.utcnow()
+    if (getcurheading() < tomorrow_static) and (getsolarangle()<0) and (getcurheading <> 999):
+        if (tomorrow_static - getcurheading()) > sleep_tolerance:
+            while (getcurheading() < (tomorrow_static - hmargin)) and (starttime + datetime.timedelta(seconds=pan_time_limit) > datetime.datetime.utcnow()):
+                if debug == True:
+                    print("4: Moving " + str(getcurheading()) + " to " + str(tomorrow_static + hmargin))
+                motor2pos()
+            motors.setSpeeds(0, 0)
 
 #In this section we angle the panels as needed
-	starttime = datetime.datetime.utcnow()
-        if (getcurangle() < getsolarangle()) and (getsolarangle() > lowestangle):# and (getcurangle() <> 999):
-                while (getcurangle() < getsolarangle()) and (starttime + datetime.timedelta(seconds=tilt_time_limit) > datetime.datetime.utcnow()):
-			motor1raise()
-		SmartDrive.SmartDrive_Stop(SmartDrive.SmartDrive_Motor_1, SmartDrive.SmartDrive_Next_Action_Brake)
+    starttime = datetime.datetime.utcnow()
+    if (getcurangle() < getsolarangle()) and (getsolarangle() > lowestangle):
+        print("Case 5")
+        while (getcurangle() < getsolarangle()) and (starttime + datetime.timedelta(seconds=tilt_time_limit) > datetime.datetime.utcnow()):
+            if debug == True:
+                print("5: Moving " + str(getcurangle()) + " to " + str(getsolarangle()))
+            motor1raise()
+        motors.setSpeeds(0, 0)
 
-        if (getcurangle() > getsolarangle()):# and (getcurangle() <> 999):
-                while (getcurangle() > getsolarangle()) and (getsolarangle() > lowestangle) and (starttime + datetime.timedelta(seconds=tilt_time_limit) > datetime.datetime.utcnow()):
-			motor1lower()
-		SmartDrive.SmartDrive_Stop(SmartDrive.SmartDrive_Motor_1, SmartDrive.SmartDrive_Next_Action_Brake)
+    if (getcurangle() > getsolarangle()):
+        while (getcurangle() > getsolarangle()) and (getsolarangle() > lowestangle) and (starttime + datetime.timedelta(seconds=tilt_time_limit) > datetime.datetime.utcnow()):
+            if debug == True:
+                print("6: Moving " + str(getcurangle()) + " to " + str(getsolarangle()))
+            motor1lower()
+        motors.setSpeeds(0, 0)
 
 #This is horizon mode- if the GPIO switch for pin 19 is flipped
 #we lower the panel to 20 degrees. This is good for installing the solar panel,
 #since it keeps the robot from moving any more while we're working on it
 if (GPIO.input(19) == True) and (GPIO.input(16) == False):
-	while (getcurangle() > 20):
-        	motor1lower()
-	SmartDrive.SmartDrive_Stop(SmartDrive.SmartDrive_Motor_1, SmartDrive.SmartDrive_Next_Action_Brake)
+    while (getcurangle() > 20):
+        motor1lower()
+    motors.setSpeeds(0, 0)
 
 #update the databases
 os.system('/usr/bin/rrdtool update /tools/sensors/corrected_azimuth_db.rrd --template corr_az N:' + str(getsolarheading()))
@@ -318,7 +306,7 @@ os.system('/usr/bin/rrdtool update /tools/sensors/actual_heading_db.rrd --templa
 
 #update the azimuth graph
 os.system('/usr/bin/rrdtool graph /var/www/azimuth_graph.png \
--w 785 -h 120 -a PNG \
+-w 600 -h 120 -a PNG \
 --slope-mode \
 --start -86400 --end now \
 --font DEFAULT:7: \
@@ -342,7 +330,7 @@ GPRINT:azimuth:MIN:\x22Min\: %5.2lf\t\t\t\x22 >/dev/null')
 
 #update the elevation graph
 os.system('/usr/bin/rrdtool graph /var/www/elevation_graph.png \
--w 785 -h 120 -a PNG \
+-w 600 -h 120 -a PNG \
 --slope-mode \
 --start -86400 --end now \
 --font DEFAULT:7: \
@@ -364,35 +352,28 @@ GPRINT:calculated:AVERAGE:\x22Avg\: %5.2lf\x22 \
 GPRINT:calculated:MAX:\x22Max\: %5.2lf\x22 \
 GPRINT:calculated:MIN:\x22Min\: %5.2lf\t\t\t\x22 >/dev/null')
 
-#Update the log files for power monitoring
-logwatts = open('/tools/inputs/wattvalue.txt','w')
-writeline=("[myvars]\n")
-logwatts.write(writeline)
-try:
-	batt_volts = str(round((SmartDrive.GetBattVoltage()/1000),2))
-except ValueError:
-	#no battery reading is evil!
-	batt_volts = 6.66
-writeline=("batt_volts: " + batt_volts + "\n")
-logwatts.write(writeline)
-logwatts.close()
-
 #Update the solar file for reporting
-logwatts = open('/tools/inputs/solarvalues.txt','w')
+logsolar = open('/tools/inputs/solarvalues.txt','w')
 writeline=("[myvars]\n")
-logwatts.write(writeline)
-writeline=("heading: " + str(round((float(getsolarheading())),1)) + "\n")
-logwatts.write(writeline)
-writeline=("elevation: " + str(round((float(getsolarangle())),1))+ "\n")
-logwatts.write(writeline)
-logwatts.close()
+logsolar.write(writeline)
+writeline=("solar_heading: " + str(round((float(getsolarheading())),1)) + "\n")
+logsolar.write(writeline)
+writeline=("solar_elevation: " + str(round((float(getsolarangle())),1))+ "\n")
+logsolar.write(writeline)
+writeline=("actual_elevation: " + str(round((float(getcurangle())),1))+ "\n")
+logsolar.write(writeline)
+writeline=("actual_heading: " + str(round((float(getcurheading())),1))+ "\n")
+logsolar.write(writeline)
+logsolar.close()
 
 
-#Create the stats.html page
-loghtml = open('/var/www/stats.html','w')
+#Create the index.html page
+loghtml = open('/var/www/index.html','w')
 writeline=("<font size=\x222\x22 face=\x22verdana\x22>\n")
 loghtml.write(writeline)
 writeline=("<head><meta http-equiv=\x22refresh\x22 content=\x2260\x22></head> \n")
+loghtml.write(writeline)
+writeline=("<link rel=\x22shortcut icon\x22 href=\x22/favicon.ico\x22/> \n")
 loghtml.write(writeline)
 writeline=("<link rel=\x22apple-touch-icon\x22 href=\x22apple-icon.png\x22/> \n \
 <link rel=\x22apple-touch-icon\x22 sizes=\x2272x72\x22 href=\x22apple-icon-72x72.png\x22/> \n \
@@ -410,11 +391,9 @@ writeline =("<font face=\x22helvetica\x22> \n")
 loghtml.write(writeline)
 writeline =("<link rel=\x22apple-touch-icon\x22 href=/icon_114.png\x22 /> \n")
 loghtml.write(writeline)
-writeline =("<a href=\x22/config/inputs.html\x22>Change Settings</a><br></br> \n")
-loghtml.write(writeline)
-writeline =("<a href=\x22/debug-solar.csv\x22>Debug Log CSV</a><br></br> \n")
-loghtml.write(writeline)
 writeline =("<table style=\x22undefined;table-layout: fixed; width: 387px\x22> \n<colgroup> \n<col style=\x22width: 160px\x22> \n<col style=\x22width: 240px\x22> \n </colgroup> \n")
+loghtml.write(writeline)
+writeline =("<tr> \n <td><a href=\x22/config/inputs.html\x22>Change Settings</a></td> \n    <td><a href=\x22/debug-solar.csv\x22>Debug Log CSV</a></td> \n  </tr> \n")
 loghtml.write(writeline)
 writeline =("<tr> \n <td>Date Time</td> \n    <td>" + str(datetime.datetime.now()) + "</td> \n  </tr> \n")
 loghtml.write(writeline)
@@ -424,21 +403,21 @@ writeline =("  </tr> \n  <tr> \n    <td>Actual Heading</td> \n    <td>" + str(ge
 loghtml.write(writeline)
 writeline = ("  <tr> \n    <td>Calculated Angle</td> \n    <td>" + str(getsolarangle()) + "</td> \n  </tr> \n")
 loghtml.write(writeline)
-writeline = ("  <tr> \n    <td>Battery Voltage</td> \n    <td>" + batt_volts + "</td> \n  </tr> \n</table>")
+writeline = ("  <tr> \n    <td>Current Angle</td> \n    <td>" + str(getcurangle()) + "</td> \n  </tr> \n</table>")
 loghtml.write(writeline)
 writeline =("<br></br> \n")
 loghtml.write(writeline)
 # we add the temp graph to the html but generate the image in the other script
-writeline =("<img src=\x22combo_temp_graph.png\x22 alt=\x22[combo_temp_graph]\x22><br></br> \n")
+writeline =("<img src=\x22internal_temp_graph.png\x22 alt=\x22[internal_temp_graph]\x22><br></br> \n")
 loghtml.write(writeline)
 writeline =("<img src=\x22azimuth_graph.png\x22 alt=\x22[elevation_graph]\x22><br></br> \n")
 loghtml.write(writeline)
 writeline =("<img src=\x22elevation_graph.png\x22 alt=\x22[elevation_graph]\x22><br></br></font> \n")
 loghtml.write(writeline)
-writeline =("<img src=\x22battery.png\x22 alt=\x22[battery_graph]\x22><br></br></font> \n")
-loghtml.write(writeline)
-writeline =("<img src=\x22analog7_graph.png\x22 alt=\x22[analog7_graph]\x22><br></br></font> \n")
-loghtml.write(writeline)
 loghtml.close()
-print (datetime.datetime.now(), ",", getrawazimuth(), ",", getsolarheading(), ",", getcurheading(), ",", getsolarangle(),",0,", getcurangle(), ",", str(SmartDrive.GetBattVoltage()/1000),",",tomorrow_static)
+#print (datetime.datetime.now(), ",", getrawazimuth(), ",", getsolarheading(), ",", getcurheading(), ",", getsolarangle(),",", getcurangle(),",",tomorrow_static)
+print (datetime.datetime.now(), ",", getrawazimuth(), ",", getsolarheading(), ",", getcurheading(), ",", getsolarangle(),",", getcurangle())
+
+motors.setSpeeds(0, 0)
+motors.disable()
 serialport.close()
